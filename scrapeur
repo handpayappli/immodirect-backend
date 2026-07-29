@@ -1,0 +1,56 @@
+# server.py
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/api/scrape")
+async def scrape_annonces(
+    ville: str = Query("Lyon"),
+    prix_min: int = Query(0),
+    prix_max: int = Query(1000000)
+):
+    results = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        
+        # Exemple d'exécution de scraping sur les sites cibles
+        try:
+            # Remplacez par l'URL cible de votre agence ou portail
+            await page.goto(f"https://www.exemple-agence.com/biens?ville={ville}", timeout=20000)
+            content = await page.content()
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Extraction des conteneurs d'annonces
+            for card in soup.find_all('div', class_='annonce-card'):
+                prix_text = card.find('span', class_='price').get_text(strip=True) if card.find('span', class_='price') else "0"
+                prix_num = int(''.join(filter(str.isdigit, prix_text)) or 0)
+                
+                # Vérification de la fourchette fixée par le client
+                if prix_min <= prix_num <= prix_max:
+                    results.append({
+                        "titre": card.find('h2').get_text(strip=True),
+                        "prix": f"{prix_num} €",
+                        "descriptifComplet": card.find('p', class_='description').get_text(strip=True),
+                        "agence": {"nom": "Agence Live", "telephone": "04 00 00 00 00"}
+                    })
+        except Exception as e:
+            print(f"Info scraping: {e}")
+        finally:
+            await browser.close()
+
+    return {"status": "ok", "data": results}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
