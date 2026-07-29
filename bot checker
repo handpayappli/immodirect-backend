@@ -1,0 +1,82 @@
+# bot_checker.py
+import asyncio
+from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+# Base de données simulée des agences souscrites à 9€/mois
+AGENCES_ABONNEES = [
+    {
+        "id": "AG-01",
+        "nom": "Century 21 Lumiere",
+        "url": "https://www.century21.fr/annonces/achat/",
+        "selecteur_annonce": ".annonces-list", # Sélecteur HTML attendu
+    },
+    {
+        "id": "AG-02",
+        "nom": "Orpi Grand Lyon",
+        "url": "https://www.orpi.com/recherche/buy",
+        "selecteur_annonce": ".c-article-teaser",
+    }
+]
+
+async def verifier_mises_a_jour_et_casse():
+    print("\n--- [BOT] Lancement de la vérification des agences abonnées ---")
+    
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        
+        for agence in AGENCES_ABONNEES:
+            context = await browser.new_context()
+            page = await context.new_page()
+            
+            try:
+                # 1. Test d'accès HTTP et chargement
+                response = await page.goto(agence["url"], timeout=30000, wait_until="domcontentloaded")
+                
+                # Vérification casse HTTP (erreur 404, 500...)
+                if response.status != 200:
+                    print(f"⚠️ [ALERTE CASSE] Agence {agence['nom']} : Code HTTP {response.status}")
+                    continue
+
+                content = await page.content()
+                soup = BeautifulSoup(content, 'html.parser')
+                
+                # 2. Vérification de la structure HTML (Sélecteurs cassés ?)
+                elements = soup.select(agence["selecteur_annonce"])
+                
+                if len(elements) == 0:
+                    print(f"⚠️ [ALERTE STRUCTURE] La structure du site de {agence['nom']} a changé ! Le scrapeur ne trouve plus les balises.")
+                else:
+                    print(f"✅ [OK] {agence['nom']} - {len(elements)} annonces vérifiées et à jour.")
+                    
+            except Exception as err:
+                print(f"❌ [ERREUR TECHNIQUE] Impossible d'accéder au site de {agence['nom']}: {err}")
+            finally:
+                await context.close()
+
+        await browser.close()
+    print("--- [BOT] Fin du cycle de contrôle ---\n")
+
+def demarrer_planificateur():
+    scheduler = AsyncIOScheduler()
+    
+    # Exécution 3 fois par jour : Matin (08h), Midi (13h), Soir (19h)
+    scheduler.add_job(verifier_mises_a_jour_et_casse, 'cron', hour=8, minute=0)
+    scheduler.add_job(verifier_mises_a_jour_et_casse, 'cron', hour=13, minute=0)
+    scheduler.add_job(verifier_mises_a_jour_et_casse, 'cron', hour=19, minute=0)
+    
+    scheduler.start()
+    print("🤖 Bot de surveillance actif. Prochains passages configurés pour 08h00, 13h00 et 19h00.")
+
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    demarrer_planificateur()
+    
+    # Lancement d'un premier contrôle de démonstration au démarrage
+    loop.create_task(verifier_mises_a_jour_et_casse())
+    
+    try:
+        loop.run_forever()
+    except (KeyboardInterrupt, SystemExit):
+        pass
